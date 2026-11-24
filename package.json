@@ -1,13 +1,14 @@
 {
   "name": "adarsh-whatsapp-bot",
-  "version": "5.1.0",
+  "version": "5.1.1",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "postinstall": "cd bgutil-server && (npm install --omit=dev --no-audit --no-fund || echo '[setup] bgutil PO engine deps failed - YouTube booster disabled')"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

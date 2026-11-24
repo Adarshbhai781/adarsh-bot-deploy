@@ -19,6 +19,9 @@ import { numberFromJid } from './lib/jid.js';
 import { mkdir } from 'fs/promises';
 import { pathToFileURL } from 'url';
 import http from 'node:http';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 const AUTH_DIR = './auth_info';
 
@@ -27,6 +30,7 @@ let sock;
 let reconnecting = false;
 let botReady = false;
 let botNumber = '';
+let lastDisconnectInfo = null;
 
 // ======================================
 // START BOT
@@ -137,23 +141,72 @@ async function startBot() {
         new Boom(lastDisconnect?.error)?.output?.statusCode;
 
       botReady = false;
-      console.log('❌ Connection closed:', statusCode);
+      lastDisconnectInfo = {
+        code: statusCode,
+        at: new Date().toISOString()
+      };
 
-      if (statusCode !== DisconnectReason.loggedOut && !reconnecting) {
-        reconnecting = true;
-        console.log('🔄 Reconnecting in 3 seconds...');
-
-        setTimeout(() => {
-          reconnecting = false;
-          startBot().catch(console.error);
-        }, 3000);
-      } else if (statusCode === DisconnectReason.loggedOut) {
+      if (statusCode === DisconnectReason.loggedOut) {
+        lastDisconnectInfo.message = 'WhatsApp session logged out. QR scan required.';
         console.log('⚠️ Logged out. Delete auth_info and pair again.');
+      } else if (statusCode === 440 || statusCode === DisconnectReason.connectionReplaced) {
+        // Another device opened the SAME session -> we got kicked.
+        // Retrying fast only creates a reconnect war, so back off 60s.
+        lastDisconnectInfo.message =
+          'Session is in use by another device (phone/Termux). Close the other bot to run it here.';
+        console.log('⚠️ Code 440: another device is using this WhatsApp session!');
+        console.log('   👉 Stop the bot running on your phone/Termux, then this cloud bot will connect automatically.');
+
+        if (!reconnecting) {
+          reconnecting = true;
+          console.log('🔄 Retrying in 60 seconds...');
+
+          setTimeout(() => {
+            reconnecting = false;
+            startBot().catch(console.error);
+          }, 60 * 1000);
+        }
+      } else {
+        console.log('❌ Connection closed:', statusCode);
+
+        if (!reconnecting) {
+          reconnecting = true;
+          console.log('🔄 Reconnecting in 3 seconds...');
+
+          setTimeout(() => {
+            reconnecting = false;
+            startBot().catch(console.error);
+          }, 3000);
+        }
       }
     }
   });
 
   return currentSock;
+}
+
+// ======================================
+// PO TOKEN ENGINE (bgutil) - helps YouTube
+// downloads on cloud/datacenter IPs
+// ======================================
+
+function startBgutilServer() {
+  const script = path.join(process.cwd(), 'bgutil-server', 'build', 'main.js');
+
+  if (!existsSync(script)) return;
+
+  try {
+    const child = spawn(
+      process.execPath,
+      [script, '--host', '127.0.0.1', '--port', '4416'],
+      { stdio: 'ignore', env: process.env }
+    );
+
+    child.on('error', () => {}); // optional component, never crash the bot
+    console.log('🔓 PO token engine started (bgutil) - better YouTube support');
+  } catch {
+    // optional component
+  }
 }
 
 // ======================================
@@ -165,7 +218,47 @@ function startWebServer() {
 
   if (!port) return; // only needed on hosts like Render
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
+    const parsed = new URL(req.url, 'http://localhost');
+
+    // /diag?url=...&key=... -> downloader probe (for remote testing)
+    if (parsed.pathname === '/diag') {
+      const key = process.env.DIAG_KEY;
+
+      if (!key || parsed.searchParams.get('key') !== key) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'forbidden' }));
+        return;
+      }
+
+      const target = parsed.searchParams.get('url');
+
+      if (!target) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'missing url param' }));
+        return;
+      }
+
+      try {
+        const { probeInfo } = await import('./lib/downloader.js');
+        const info = await probeInfo(target);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          title: info.title || null,
+          platform: info.extractor_key || null,
+          duration: info.duration || null,
+          size: info.filesize || info.filesize_approx || null,
+          ext: info.ext || null,
+          isLive: !!info.is_live
+        }));
+      } catch (error) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: error.message }));
+      }
+      return;
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,
@@ -175,6 +268,7 @@ function startWebServer() {
       number: botNumber ? `+${botNumber}` : null,
       commands: commands.size,
       uptimeSeconds: Math.floor(process.uptime()),
+      lastDisconnect: lastDisconnectInfo,
       time: new Date().toISOString()
     }));
   });
@@ -207,6 +301,8 @@ async function main() {
   await restoreSessionIfNeeded('./auth_info');
 
   commands = await loadCommands();
+
+  startBgutilServer();
 
   startWebServer();
 

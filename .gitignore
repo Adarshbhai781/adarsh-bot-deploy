@@ -7,3 +7,4 @@ auth_info/
 session/
 wa-session.tgz
 *.tgz
+bgutil-server/node_modules/
