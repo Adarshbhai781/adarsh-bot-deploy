@@ -1,0 +1,9 @@
+node_modules/
+npm-debug.log*
+*.log
+.DS_Store
+tmp/
+auth_info/
+session/
+wa-session.tgz
+*.tgz
