@@ -36,4 +36,4 @@ export const ANTI_DELETE = true;
 export const DOWNLOAD_MAX_MB = 500;
 
 // Bot version
-export const BOT_VERSION = '5.1.4';
+export const BOT_VERSION = '5.1.5';
