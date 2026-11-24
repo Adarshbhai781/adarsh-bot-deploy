@@ -241,7 +241,8 @@ function startWebServer() {
 
       try {
         const { probeInfo } = await import('./lib/downloader.js');
-        const info = await probeInfo(target);
+        const client = parsed.searchParams.get('client');
+        const info = await probeInfo(target, client ? { playerClient: client } : {});
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           ok: true,

@@ -1,6 +1,6 @@
 {
   "name": "adarsh-whatsapp-bot",
-  "version": "5.1.1",
+  "version": "5.1.3",
   "private": true,
   "type": "module",
   "engines": {
